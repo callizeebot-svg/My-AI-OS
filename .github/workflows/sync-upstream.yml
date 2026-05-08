@@ -1,0 +1,47 @@
+name: Check AI-OS Upstream for Updates
+
+on:
+  schedule:
+    # Run every Monday at 9am Sydney time (UTC+10/11) = Sunday 11pm UTC
+    - cron: '0 23 * * 0'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout My-AI-OS
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch AI-OS upstream
+        run: |
+          git remote add ai-os-upstream https://github.com/callizeebot-svg/AI-OS.git || true
+          git fetch ai-os-upstream main
+
+      - name: Check for new commits
+        id: check
+        run: |
+          NEW_COMMITS=$(git log HEAD..ai-os-upstream/main --oneline --no-merges | wc -l)
+          echo "new_commits=$NEW_COMMITS" >> $GITHUB_OUTPUT
+          if [ "$NEW_COMMITS" -gt "0" ]; then
+            echo "Found $NEW_COMMITS new commits in AI-OS upstream"
+            git log HEAD..ai-os-upstream/main --oneline --no-merges
+          else
+            echo "My-AI-OS is up to date with AI-OS upstream"
+          fi
+
+      - name: Create PR if updates available
+        if: steps.check.outputs.new_commits > 0
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const newCommits = '${{ steps.check.outputs.new_commits }}';
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `AI-OS upstream has ${newCommits} new commit(s) available`,
+              body: `The [AI-OS upstream](https://github.com/callizeebot-svg/AI-OS) has ${newCommits} new commit(s) that haven't been merged into My-AI-OS yet.\n\nTo review and merge:\n\`\`\`bash\n./scripts/sync-upstream.sh\n\`\`\`\n\nThis issue was auto-created by the sync workflow.`,
+              labels: ['upstream-sync']
+            });
