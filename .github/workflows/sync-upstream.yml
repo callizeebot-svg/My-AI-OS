@@ -1,13 +1,27 @@
-name: Check AI-OS Upstream for Updates
+name: Watch AI-OS for Updates (Advisory Only)
+
+# ============================================================
+# IMPORTANT: This workflow NEVER merges or applies anything.
+# It only WATCHES for changes and creates an advisory report.
+# All updates require:
+#   1. Security review
+#   2. Advantage/disadvantage assessment
+#   3. Cally's explicit approval
+#   4. Planned implementation that keeps My-AI-OS data intact
+# ============================================================
 
 on:
   schedule:
-    # Run every Monday at 9am Sydney time (UTC+10/11) = Sunday 11pm UTC
+    # Every Monday at 9am Sydney time
     - cron: '0 23 * * 0'
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Why you are triggering this check'
+        required: false
 
 jobs:
-  check-upstream:
+  watch-upstream:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout My-AI-OS
@@ -15,33 +29,86 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Fetch AI-OS upstream
+      - name: Fetch AI-OS upstream (READ ONLY)
         run: |
-          git remote add ai-os-upstream https://github.com/callizeebot-svg/AI-OS.git || true
-          git fetch ai-os-upstream main
+          git remote add ai-os https://github.com/callizeebot-svg/AI-OS.git || true
+          git fetch ai-os main --no-tags
 
-      - name: Check for new commits
-        id: check
+      - name: Analyse new commits
+        id: analyse
         run: |
-          NEW_COMMITS=$(git log HEAD..ai-os-upstream/main --oneline --no-merges | wc -l)
-          echo "new_commits=$NEW_COMMITS" >> $GITHUB_OUTPUT
-          if [ "$NEW_COMMITS" -gt "0" ]; then
-            echo "Found $NEW_COMMITS new commits in AI-OS upstream"
-            git log HEAD..ai-os-upstream/main --oneline --no-merges
-          else
-            echo "My-AI-OS is up to date with AI-OS upstream"
+          COUNT=$(git log HEAD..ai-os/main --oneline --no-merges | wc -l | tr -d ' ')
+          echo "count=$COUNT" >> $GITHUB_OUTPUT
+
+          if [ "$COUNT" -gt "0" ]; then
+            echo "## New commits in AI-OS (not yet in My-AI-OS)" > /tmp/report.md
+            echo "" >> /tmp/report.md
+            echo "| Commit | Message |" >> /tmp/report.md
+            echo "|--------|---------|" >> /tmp/report.md
+            git log HEAD..ai-os/main --no-merges --format="| \`%h\` | %s |" >> /tmp/report.md
+            echo "" >> /tmp/report.md
+            echo "## Files changed" >> /tmp/report.md
+            git diff HEAD ai-os/main --name-only >> /tmp/report.md
+            cat /tmp/report.md
           fi
 
-      - name: Create PR if updates available
-        if: steps.check.outputs.new_commits > 0
+      - name: Create advisory issue (if updates exist)
+        if: steps.analyse.outputs.count > 0
         uses: actions/github-script@v7
         with:
           script: |
-            const newCommits = '${{ steps.check.outputs.new_commits }}';
+            const fs = require('fs');
+            const count = '${{ steps.analyse.outputs.count }}';
+            let report = '';
+            try { report = fs.readFileSync('/tmp/report.md', 'utf8'); } catch(e) {}
+
+            const body = `## AI-OS has ${count} new update(s) — Advisory Report
+
+            > **DO NOT apply these updates without following the vetting process below.**
+
+            ${report}
+
+            ---
+
+            ## Vetting Checklist (complete before any merge)
+
+            ### Security Review
+            - [ ] Scan changed files for new dependencies added
+            - [ ] Check for any changes to auth, secrets handling, or data access
+            - [ ] Look for any outbound network calls that weren't there before
+            - [ ] Verify no credentials or keys are hardcoded
+
+            ### Advantage / Disadvantage Assessment
+            - [ ] What problem does this update solve?
+            - [ ] Does it affect any of my current apps (dispatch, mail, calendar, content, voice, forms)?
+            - [ ] Does it change the database schema? (could affect my data)
+            - [ ] Does it change any APIs my apps depend on?
+            - [ ] Is it a breaking change?
+
+            ### Before Proceeding
+            - [ ] Cally has reviewed this report and approves the update
+            - [ ] A plan exists for applying the update without data loss
+            - [ ] A backup of My-AI-OS data has been made
+
+            ### Safe Implementation Steps (if approved)
+            1. Create a separate branch: \`git checkout -b update/ai-os-<date>\`
+            2. Cherry-pick only the commits that are wanted
+            3. Test in isolation before merging to main
+            4. Verify all context files in \`context/\` are untouched
+            5. Merge only after Cally confirms everything works
+
+            ---
+
+            *Auto-created by the AI-OS watcher. This is advisory only — nothing has been merged.*`;
+
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `AI-OS upstream has ${newCommits} new commit(s) available`,
-              body: `The [AI-OS upstream](https://github.com/callizeebot-svg/AI-OS) has ${newCommits} new commit(s) that haven't been merged into My-AI-OS yet.\n\nTo review and merge:\n\`\`\`bash\n./scripts/sync-upstream.sh\n\`\`\`\n\nThis issue was auto-created by the sync workflow.`,
-              labels: ['upstream-sync']
+              title: `[Advisory] AI-OS has ${count} update(s) — needs vetting before applying`,
+              body: body,
+              labels: ['upstream-advisory', 'needs-review']
             });
+
+      - name: No updates found
+        if: steps.analyse.outputs.count == 0
+        run: echo "My-AI-OS is up to date with AI-OS. No action needed."

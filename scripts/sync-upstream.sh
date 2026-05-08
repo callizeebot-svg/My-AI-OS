@@ -1,33 +1,53 @@
 #!/usr/bin/env bash
-# sync-upstream.sh — Pull latest changes from AI-OS (agent-native upstream)
-# Run this whenever BuilderIO releases updates you want to pull in.
+# sync-upstream.sh — ADVISORY ONLY
+#
+# This script READS and REPORTS on what AI-OS upstream has changed.
+# It does NOT merge, apply, or modify anything.
+#
+# To apply an update, follow the manual process in UPDATE-PROCESS.md
 #
 # Usage: ./scripts/sync-upstream.sh
 
 set -e
 
 UPSTREAM_REPO="https://github.com/callizeebot-svg/AI-OS.git"
-UPSTREAM_REMOTE="ai-os-upstream"
-UPSTREAM_BRANCH="main"
+UPSTREAM_REMOTE="ai-os"
 
-echo "Syncing from AI-OS upstream..."
+echo "======================================="
+echo "AI-OS Upstream Watcher — Advisory Only"
+echo "======================================="
+echo ""
 
 # Add remote if not already present
 if ! git remote | grep -q "^${UPSTREAM_REMOTE}$"; then
   git remote add "$UPSTREAM_REMOTE" "$UPSTREAM_REPO"
-  echo "Added remote: $UPSTREAM_REMOTE"
 fi
 
-# Fetch latest from upstream
-git fetch "$UPSTREAM_REMOTE" "$UPSTREAM_BRANCH"
+git fetch "$UPSTREAM_REMOTE" main --quiet
 
-echo ""
-echo "Commits in AI-OS not yet in My-AI-OS:"
-git log HEAD..${UPSTREAM_REMOTE}/${UPSTREAM_BRANCH} --oneline --no-merges
+COUNT=$(git log HEAD..${UPSTREAM_REMOTE}/main --oneline --no-merges | wc -l | tr -d ' ')
 
+if [ "$COUNT" -eq "0" ]; then
+  echo "My-AI-OS is up to date. No changes in AI-OS upstream."
+  exit 0
+fi
+
+echo "Found $COUNT new commit(s) in AI-OS upstream:"
 echo ""
-echo "To merge upstream changes:"
-echo "  git merge ${UPSTREAM_REMOTE}/${UPSTREAM_BRANCH} --allow-unrelated-histories"
+git log HEAD..${UPSTREAM_REMOTE}/main --oneline --no-merges
 echo ""
-echo "To cherry-pick a specific commit:"
-echo "  git cherry-pick <commit-hash>"
+echo "Files changed:"
+git diff HEAD ${UPSTREAM_REMOTE}/main --name-only
+echo ""
+echo "======================================="
+echo "NEXT STEPS — Do not merge without:"
+echo "======================================="
+echo "1. Security review (new deps? auth changes? outbound calls?)"
+echo "2. Impact assessment (schema changes? API breaks? data effects?)"
+echo "3. Cally's explicit approval"
+echo "4. Following UPDATE-PROCESS.md for safe implementation"
+echo ""
+echo "See: cat UPDATE-PROCESS.md"
+echo ""
+echo "To view a specific commit's diff:"
+echo "  git show ai-os/<commit-hash>"
